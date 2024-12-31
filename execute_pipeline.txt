@@ -1,0 +1,212 @@
+for f in atlas_data/*pat.gz; do
+	f_base=$(basename $f);
+	f_base=$f_base:r:r;
+	out_file="imprint_atlas_data/$f_base.blocks.tsv";
+	out_file_gz="imprint_atlas_data/$f_base.blocks.tsv.gz";
+	if [ ! -f "$out_file" ]; then
+		sbatch --killable --requeue --wrap="python3 segment_pats.py --pats $f -o $out_file --min_u_threshold 0.25 --max_u_threshold 0.75 --min_m_threshold 0.25 --max_m_threshold 0.75 --window_size 4 --homog_read_cutoff 0.65 --genome hg38" -c16 --mem=10g -t 0-0:40 -o slurm-segment-PAT-$f_base-%j.out -J segment-pats-$f_base;
+	fi
+done
+
+for f in imprint_atlas_data/*blocks.tsv; do
+	f_base=$(basename $f);
+	f_base=$f_base:r:r;
+	cat header_file.txt $f | sponge $f;
+done
+
+
+for f in imprint_atlas_data/*blocks.tsv; do
+	f_base=$(basename $f);
+	f_base=$f_base:r:r;
+	out_file="imprint_atlas_data/$f_base.blocks.tsv.gz";
+	if [ ! -f "$out_file" ] && [[ ! "$f_base" = *"unified"* ]]; then
+		sbatch --killable --wrap="bgzip $f && tabix -p bed $out_file" -c1 --mem=5g -t 0-6 -o slurm-index-blocks-$f_base-%j.out -J index-blocks-$f_base
+	fi
+done
+
+for f in imprint_atlas_data/*blocks.tsv.gz; do
+	f_base=$(basename $f);
+	f_base=$f_base:r:r:r;
+	out_file="imprint_atlas_data/$f_base.blocks.significant.tsv";
+	if [ ! -f "$out_file" ]; then
+		sbatch  --killable --requeue --wrap="wgbstools test_bimodal atlas_data/$f_base.pat.gz -L $f --threads 16 --out_file $out_file" -c16 --mem=8g -t 0-6 -o slurm-find-sginificant-bimodal-regions-$f_base-%j.out -J significant-bimodal-$f_base
+	fi
+done
+
+
+for f in imprint_atlas_data/*blocks.significant.tsv; do
+	f_base=$(basename $f);
+	f_base=$f_base:r:r:r;
+	out_file="imprint_atlas_data/$f_base.blocks.significant.tsv.gz";
+	if [ ! -f "$out_file" ]; then
+		sbatch --killable --requeue --wrap="sort -k4,4n $f | sponge $f && bgzip $f && tabix -p bed $out_file" -c1 --mem=1g -t 0-0:20 -o slurm-sort-and-index-$f_base-%j.out -J sort-and-index-$f_base;
+	fi
+done
+
+
+for f in imprint_atlas_data/*blocks.significant.tsv.gz; do
+	f_base=$(basename $f);
+	f_base=$f_base:r:r:r:r;
+	out_file="imprint_atlas_data/$f_base.extended_sites.tsv";
+	if [ ! -f "$out_file" ]; then
+		sbatch --killable --requeue --wrap="python3 extend_block_tails.py --in_file $f --data_dir 'atlas_data/' --num_threads 16 --out_file $out_file" -c16 --mem=5g -t 0-1 -o slurm-extend-tails-$f_base-%j.out -J extend-tails-$f_base
+	fi
+done
+
+
+for f in imprint_atlas_data/*.extended_sites.tsv; do
+	f_base=$(basename $f);
+	f_base=$f_base:r:r;
+	out_file="imprint_atlas_data/$f_base.blocks.significant.extended.tsv.gz";
+	out_file_no_gz=$out_file:r;
+	if [ ! -f "$out_file" ] && [[ ! -f "$out_file_no_gz" ]]; then
+		sbatch --killable --requeue --wrap="sort -k1,1n $f -o $f && wgbstools convert --genome hg38 --site_file $f --out_path $out_file_no_gz && cat header_file.txt $out_file_no_gz | sponge $out_file_no_gz && bgzip $out_file_no_gz && tabix -p bed $out_file" -c1 --mem=1g -t 0-0:20 -o slurm-sort-and-index-$f_base-%j.out -J sort-and-index-$f_base;
+	fi
+done
+
+gunzip -c GGSE186458.blocks.min_len_3.205.bed | awk '{if($5 - $4 > 2){{print $1"\t"$4}{print $1"\t"$5}}}' | sort -k2,2n -u >GSE186458.blocks.min_len_3.205.min_len_3.tsv
+
+for f in imprint_atlas_data/*blocks.significant.extended.tsv.gz; do
+	f_base=$(basename $f);
+	f_base=$f_base:r:r:r:r:r;
+	out_file="imprint_atlas_data/$f_base.unified.blocks.tsv";
+	if [ ! -f "$out_file" ] && [[ ! "$f_base" = *"unified"* ]]; then
+		sbatch --killable --requeue --wrap="python3 update_pat_blocks_with_boundaries.py --regions_file $f --boundary_file segmentation_files/GSE186458.blocks.min_len_3.205.bed --out_file $out_file" -c1 --mem=3g --time-min=20 -o slurm-unify-block-$f_base-%j.out -J unify-blocks-$f_base;
+	fi
+done
+
+
+for f in imprint_atlas_data/*unified.blocks.tsv; do
+	f_base=$(basename $f);
+	f_base=$f_base:r:r:r;
+	out_file="imprint_atlas_data/$f_base.unified.large.tsv";
+	if [ ! -f "$out_file" ]; then
+		sort $f -k2,2n -u | awk '{if($2 - $1 > 2){print $0}}' > $out_file;
+	fi
+done
+
+
+for f in imprint_atlas_data/*.unified.large.tsv; do
+	f_base=$(basename $f);
+	f_base=$f_base:r:r:r;
+	out_file="imprint_atlas_data/$f_base.formatted.blocks.tsv";
+	out_file_gz="$out_file.gz";
+	if [ ! -f "$out_file" ] && [[ ! -f "$out_file_no_gz" ]]; then
+		sbatch --killable --requeue --wrap="wgbstools convert --genome hg38 --no_anno --site_file $f --out_path $out_file && cat header_file.txt $out_file | sponge $out_file && bgzip $out_file && tabix -p bed $out_file_gz" -c1 --mem=1g -t 0-0:20 -o slurm-sort-and-convert-unified-$f_base-%j.out -J sort-and-index-$f_base;
+	fi
+done
+
+
+for f in imprint_atlas_data/*.formatted.blocks.tsv.gz; do
+	f_base=$(basename $f);
+	f_base=$f_base:r:r:r:r;
+	no_gz_file="imprint_atlas_data/$f_base.formatted.blocks.tsv";
+	gunzip $f && cat header_file.txt $no_gz_file | sponge $no_gz_file && bgzip $no_gz_file && tabix -p bed $f;
+done
+
+
+for f in imprint_atlas_data/*.formatted.blocks.tsv.gz; do
+	f_base=$(basename $f);
+	f_base=$f_base:r:r:r:r;
+	out_file="imprint_atlas_data/homog/$f_base.homog.gz";
+	if [ ! -f "$out_file" ]; then
+		sbatch --killable --requeue --wrap="zcat atlas_data/$f_base.pat.gz | homog/homog - imprint_atlas_data/homog/$f_base -r 0,.251,.75,1 -l 3 -b $f" -c1 --mem=10g -t 0-1 -o slurm-homog-$f_base-%j.out -J create-homog-$f_base;
+	fi
+done
+
+
+for f in imprint_atlas_data/homog/*homog.gz; do
+	fbname=$(basename "$f" | cut -d. -f1);
+	echo $fbname;
+	out_file="imprint_atlas_data/homog/$fbname.bimodal.tsv";
+	if [ ! -f "$out_file" ]; then
+		sbatch --killable --requeue --wrap="imprint_atlas_data/homog/create_bimodal.sh $f $fbname" -c1 --mem=10g -t 0-1 -o slurm-create-bimodal-blocks-$fbname-%j.out -J create-bimodal-$fbname;
+	fi
+done
+
+
+cat imprint_atlas_data/homog/*bimodal.tsv > imprint_atlas_data/homog/all_blocks/all_blocks.tsv
+cat imprint_atlas_data/homog/all_blocks/all_blocks.tsv | awk '{print($1 "\t" $2 "\t" $3 "\t" $4 "\t" $5)}' > imprint_atlas_data/homog/all_blocks/all_bimodal_blocks.tsv
+sort -u imprint_atlas_data/homog/all_blocks/all_bimodal_blocks.tsv | sort -k4,4n > imprint_atlas_data/homog/all_blocks/all_blocks.sorted.tsv
+cat ../header_file.txt imprint_atlas_data/homog/all_blocks/all_blocks.sorted.tsv | sponge imprint_atlas_data/homog/all_blocks/all_blocks.sorted.tsv
+bgzip imprint_atlas_data/homog/all_blocks/all_blocks.sorted.tsv
+tabix -p bed imprint_atlas_data/homog/all_blocks/all_blocks.sorted.tsv.gz
+
+
+
+for f in atlas_data/*pat.gz; do
+	f_base=$(basename $f);
+	f_base=$f_base:r:r;
+	homog_file="imprint_atlas_data/homog/homog_aligned/${f_base}.homog.gz";
+	if [ ! -f "$homog_file" ]; then
+		sbatch --killable --requeue --wrap="zcat atlas_data/$f_base.pat.gz | homog/homog - imprint_atlas_data/homog/homog_aligned/$f_base -r 0,.251,.75,1 -l 3 -b imprint_atlas_data/homog/all_blocks/all_blocks.sorted.tsv.gz" -c1 --mem=10g -t 0-1 -o slurm-homog-aligned-$f_base-%j.out;
+	fi
+done
+
+
+for f in imprint_atlas_data/homog/homog_aligned/*homog.gz; do
+	f_base=$(basename $f);
+	f_base=$f_base:r:r;
+	out_file="imprint_atlas_data/homog/homog_aligned/$f_base.print_all.bimodal_blocks.tsv";
+	if [ ! -f "$out_file" ]; then
+		sbatch  --killable --requeue --wrap="wgbstools test_bimodal atlas_data/$f_base.pat.gz -L $f --threads 16 --out_file $out_file --min_len 3 --print_all_regions" -c16 --mem=8g -t 0-6 -o slurm-find-sginificant-bimodal-regions-$f_base-%j.out -J significant-bimodal-$f_base
+	fi
+done
+
+
+for f in imprint_atlas_data/homog/homog_aligned/*.print_all.bimodal_blocks.tsv; do
+	f_base=$(basename $f);
+	f_base=$f_base:r:r:r;
+	out_file="imprint_atlas_data/homog/homog_aligned/$f_base.print_all.bimodal_blocks.tsv.gz";
+	if [ ! -f "$out_file" ]; then
+		sbatch --killable --requeue --wrap="sort -k1,1 -k2,2n $f -o $f && bgzip $f && tabix -p bed $out_file" -c1 --mem=8g -t 0-1 -o slurm-index-$f_base-bimodal-%j.out -J index-bimodal-significant-$f_base
+	fi
+done
+
+
+
+for f in atlas_data/*.bam; do
+	f_base=$(basename $f);
+	f_base=$f_base:r;
+	out_file="imprint_atlas_data/homog/homog_aligned/all_snps/${f_base}.allele.homog.gz"
+	if [ ! -f "$out_file" ]; then
+		sbatch --killable --wrap="python3 homog_by_allele.py --snps_file all_gnom_ad_in_bimodal.snps_file.txt.gz --regions_file all_gnom_ad_in_bimodal.snps_file.enlarged_regions.bed.gz -t 0.3501,0.65 $f --threads 8 -o imprint_atlas_data/homog/homog_aligned/all_snps/ --min_cpg 3" -c8 --mem=16g -t 0-5 -o slurm-create-homog-allele-$f_base-%j.out -J create-homog-allele-$f_base
+	fi
+done
+
+
+
+
+
+cat imprint_atlas_data/homog/homog_aligned/all_snps/HOWTO      
+tabix gnomAD/gnomAD.all.hg19.bed.gz -R ../../all_blocks/all_blocks.sorted.tsv.gz | awk '($7 > 0.01 && $7 < 0.99)' > all_gnom_ad_in_bimodal.bed
+cat all_gnom_ad_in_bimodal.bed | awkt '{print $1, $2, $5, $6}' > all_gnom_ad_in_bimodal.snps_file.txt
+sort -k1,1 -k2,2n all_gnom_ad_in_bimodal.snps_file.txt -o all_gnom_ad_in_bimodal.snps_file.txt
+sort -u all_gnom_ad_in_bimodal.snps_file.txt | sort -k1,1 -k2,2n > all_gnom_ad_in_bimodal.snps_file.unique.txt
+mv all_gnom_ad_in_bimodal.snps_file.unique.txt all_gnom_ad_in_bimodal.snps_file.txt
+
+bgzip all_gnom_ad_in_bimodal.snps_file.txt
+tabix -Cf -b 2 -e 2 all_gnom_ad_in_bimodal.snps_file.txt.gz
+zcat all_gnom_ad_in_bimodal.snps_file.txt.gz | awkt '{print $1, $2-1000, $2+1000}' > all_gnom_ad_in_bimodal.snps_file.enlarged_regions.bed
+bgzip all_gnom_ad_in_bimodal.snps_file.enlarged_regions.bed
+tabix -p bed all_gnom_ad_in_bimodal.snps_file.enlarged_regions.bed.gz
+
+
+for f in atlas_dta/*.bam; do
+        f_base=$(basename $f);
+        f_base=$f_base:r;
+        out_file="imprint_atlas_data/homog/homog_aligned/all_snps/${f_base}.allele.homog.gz"
+        if [ ! -f "$out_file" ]; then
+                sbatch --killable --wrap="python3 homog_by_allele.py --snps_file all_gnom_ad_in_bimodal.snps_file.txt.gz --regions_file all_gnom_ad_in_bimodal.snps_file.enlarged_regions.bed.gz -t 0.3501,0.65 $f --threads 8 -o imprint_atlas_data/homog/homog_aligned/all_snps/ --min_cpg 3 --genome hg38" -c8 --mem=16g -t 0-10 -o slurm-create-homog-allele-$f_base-%j.out -J create-homog-allele-$f_base
+        fi
+done
+
+
+for f in imprint_atlas_data/homog/homog_aligned/all_snps/*allele.homog.gz; do
+	f_base=$(basename $f);
+	f_base=$f_base:r:r:r;
+	out_file="imprint_atlas_data/homog/homog_aligned/all_snps/${f_base}.allele.homog.pval.gz"
+	if [ ! -f "$out_file" ]; then
+		sbatch --killable --requeue --wrap="python3 add_p_value_to_allele_homog.py --in_file $f --data_dir imprint_atlas_data/homog/homog_aligned/all_snps/" -c2 --mem=2g -t 0-1 -o slurm-add_p_val-$f_base-%j.out -J add_p_val-$f_base
+	fi
+done
