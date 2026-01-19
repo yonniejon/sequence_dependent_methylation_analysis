@@ -1,3 +1,20 @@
+"""
+DMR Block Boundary Unification Tool
+---------------------------------------
+This script synchronizes identified bimodal methylation blocks with a set of "universal"
+atlas boundaries. It iterates through candidate blocks and snaps their start
+and end CpG indices to the nearest available boundaries defined in a reference
+segmentation file. This ensures that bimodal methylation regions
+align with established biological segments across different cell types and studies.
+
+Key Capabilities:
+- Boundary Alignment: Uses a dual-iterator approach to efficiently find the
+  closest upstream and downstream universal segments for each block.
+- Chromosome Synchronization: Handles cross-chromosome boundary transitions
+  and ensures markers are matched within the correct genomic context.
+- Buffer-Optimized I/O: Implements a list-based write buffer (1000 lines) for parallelization.
+"""
+
 import argparse
 import gzip as gz
 import os
@@ -145,6 +162,3 @@ def main():
 
 if __name__ == '__main__':
     main()
-    # block_boundary_iterator("/cs/zbio/jrosensk/block_files_2/Aorta-Endothel-Z00000422.blocks.tsv",
-    #                         "/cs/cbio/jon/segmentation_files/block_boundaries.tsv",
-    #                         "/cs/zbio/jrosensk/block_files_2/Aorta-Endothel-Z00000422.blocks.unified.tsv")

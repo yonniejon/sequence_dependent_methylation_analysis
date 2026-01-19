@@ -1,11 +1,26 @@
 import os
 from multiprocessing import Pool
 import pandas as pd
-
-from asm_catalog import choose_blocks_by_fdr_bh
+from statsmodels.stats.multitest import multipletests
 from asm_utils import format_float
 from handle_snps import classify_as_imprinting
 
+
+
+def choose_blocks_by_fdr_bh(pvals, blocks, alpha=0.1, return_only_selected=True):
+    rejected_list, corrected_p_vals, _, _ = multipletests(pvals, alpha=alpha, method='fdr_bh')
+    index = 0
+    if return_only_selected:
+        for rejected in rejected_list:
+            if not rejected:
+                break
+            index += 1
+        if index > 0:
+            return corrected_p_vals[0:index], blocks[0:index], pvals[0:index]
+        else:
+            return [], [], []
+    else:
+        return corrected_p_vals, blocks, pvals
 
 def iterate_over_files_with_pandas(file_name, base_name):
     expected_cols = ["chrom", "start", "let1", "let2", "u1", "x1", "m1", "u2", "x2", "m2", "p_val", "let1_is_u"]

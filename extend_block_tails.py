@@ -1,3 +1,22 @@
+"""
+Bimodal Methylation Block Boundary Refinement Tool
+------------------------------------------
+This script refines the start and end boundaries (CpG indices) of previously
+identified bimodal DNA methylation blocks. It "explores the tails" of each block by
+analyzing raw fragment patterns (PAT files) and methylation levels (BETA files)
+to extend or trim boundaries based on bimodal signals.
+
+Key Capabilities:
+- Tail Exploration: Heuristically adjusts block borders by scanning adjacent
+  CpG sites for persistent bimodal (U/M) or heterogeneous (X) read proportions.
+- Tabix Integration: Uses indexed genomic queries to efficiently fetch local
+  methylation fragments.
+- Multiprocessing: Processes genomic regions in parallel across chromosomes
+  to handle large-scale WGBS data.
+- Signal Validation: Implements error-tolerant scanning logic (allowed mistakes)
+  to prevent premature boundary termination due to single-site noise.
+"""
+
 import optparse
 import os
 import subprocess
@@ -18,25 +37,11 @@ def explore_tail_bimodal_finder(chrom, start_site, end_site, pat_file, beta_file
     allowed_x_prop = 0.4
     min_um_proportion = 0.3
     homog_prop = 0.25
-
-    # beta_array = np.fromfile(beta_file, dtype=np.uint8).reshape((-1, 2))
-    # found_end = find_new_border_by_c_prop(accepted_threshold, allowed_mistakes, beta_array, end_site, max_addition, 1)
     new_found_end = find_border_by_um_prop(allowed_mistakes, min_um_proportion, chrom, end_site, end_site + max_addition, homog_prop,
                                            pat_file, 1)
-    # if found_end - end_site >= new_block_min_len:
-    #
-    # else:
-    #     new_found_end = end_site
-
-    # found_start = find_new_border_by_c_prop(accepted_threshold, allowed_mistakes, beta_array, start_site, max_addition, -1)
     new_found_start = find_border_by_x_prop(allowed_mistakes, min_um_proportion, chrom, start_site,
                                             start_site - max_addition, homog_prop,
                                             pat_file, -1)
-    # if start_site - found_start >= new_block_min_len:
-    #     new_found_start = find_border_by_x_prop(allowed_mistakes, min_um_proportion, chrom, start_site, start_site - max_addition, homog_prop,
-    #                                           pat_file, -1)
-    # else:
-    #     new_found_start = start_site
 
     return min(new_found_start, start_site), max(new_found_end, end_site) # this is necessary because sometimes the very first site breaks rules and is removed
 
@@ -52,8 +57,6 @@ def explore_tail(chrom, start_site, end_site, pat_file, beta_file):
     beta_array = np.fromfile(beta_file, dtype=np.uint8).reshape((-1, 2))
     found_end = find_new_border_by_c_prop(accepted_threshold, allowed_mistakes, beta_array, end_site, max_addition, 1)
     if found_end - end_site >= new_block_min_len:
-        # new_found_end = find_border_by_x_prop(allowed_mistakes, allowed_x_prop, chrom, end_site, found_end, homog_prop,
-        #                                       pat_file, 1)
         new_found_end = find_border_by_tabix(chrom, end_site, found_end, pat_file, 1)
         # new_found_end = found_end
     else:
@@ -299,26 +302,15 @@ def process_blocks_file(blocks_file, pat_file, beta_file, out_file, num_threads)
 
 if __name__ == '__main__':
     parser = optparse.OptionParser()
-    parser.add_option('--in_file',
-                      default="/cs/zbio/jrosensk/block_files_smoothed/Adipocytes-Z000000T5.blocks.significant.tsv.gz")
-    parser.add_option('--data_dir',
-                      default="/cs/cbio/jon/grail_atlas/data")
+    parser.add_option('--in_file', require=True)
+    parser.add_option('--data_dir', require=True)
     parser.add_option('--num_threads',
                       default=1)
-    parser.add_option('--out_file')
+    parser.add_option('--out_file', require=True)
     options, arguments = parser.parse_args()
     file_name = options.in_file
 
     base_name = file_name.split("/")[-1].split(".")[0]
     pat_file = os.path.join(options.data_dir, base_name + ".pat.gz")
     beta_file = os.path.join(options.data_dir, base_name + ".beta")
-
-    # beta_file = "/cs/cbio/jon/grail_atlas/data/Colon-Left-Endocrine-Z0000044J.beta"
-    # pat_file = "/cs/cbio/jon/grail_atlas/data/Colon-Left-Endocrine-Z0000044J.pat.gz"
-
-    # chrom = "chr2"
-    # start = 3492370
-    # end = 3492381
-    # n_s_b, n_e_b = explore_tail_bimodal_finder(chrom, start, end, pat_file, beta_file)
-    # n_s, n_e = explore_tail(chrom, start, end, pat_file, beta_file)
     process_blocks_file(file_name, pat_file, beta_file, options.out_file, int(options.num_threads))

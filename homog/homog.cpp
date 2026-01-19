@@ -1,15 +1,12 @@
-
-
 #include <queue>
 #include "homog.h"
 
-
-
-
+/**
+ * @brief Splits a tab-separated string into a vector of strings.
+ * @param line The input string to tokenize.
+ * @return A vector containing the tab-separated tokens.
+ */
 std::vector <std::string> line2tokens(std::string &line) {
-    /**
-     * Break string line to tokens, return it as a vector of strings
-     */
     std::vector <std::string> result;
     std::string cell;
     std::stringstream lineStream(line);
@@ -18,40 +15,46 @@ std::vector <std::string> line2tokens(std::string &line) {
     return result;
 }
 
+/**
+ * @brief Utility to print a vector of strings to stderr for debugging.
+ * @param vec The vector to print.
+ */
 void print_vec(std::vector <std::string> &vec) {
-    /** print a vector to stderr, tab separated */
     for (auto &j: vec)
         std::cerr << j << "\t";
     std::cerr << std::endl;
 }
 
+/**
+ * @brief Comparator for a min-heap based on the end position of a Block.
+ */
 auto end_compare = [](Block a, Block b) { return a.end > b.end; };
 
-//Block pop_heap(std::vector<Block> a_vec){
-//    std::pop_heap (a_vec.begin(),a_vec.end(), end_compare);
-//    Block a = a_vec.back();
-//    a_vec.pop_back();
-//    return a;
-//}
-//void push_heap(std::vector<Block> a_vec, Block a_block){
-//    a_vec.push_back(a_block);
-//    std::push_heap(a_vec.begin(), a_vec.end(), end_compare);
-//}
-
+/**
+ * @brief Checks if a genomic read overlaps with a defined block.
+ * @return True if there is any intersection or containment.
+ */
 bool intersects_block(int read_start, int read_end, int block_start, int block_end){
     bool is_inside = (read_start >= block_start && read_start < block_end) || (read_end >= block_start && read_end < block_end);
     bool read_contains = read_start <= block_start && read_end >= block_end;
     return is_inside || read_contains;
 }
 
-
+/**
+ * @brief Allocates and zeroes out an array for storing bin counts.
+ * @param len The number of bins (width) per block.
+ * @return Pointer to the allocated memory.
+ */
 int32_t *Homog::init_array(int len) {
     int *arr = new int32_t[nr_blocks * len];
     std::fill_n(arr, nr_blocks * len, 0);
     return arr;
 }
 
-// Constructor
+/**
+ * @brief Constructor for the Homog class.
+ * Initializes methylation ranges, loads genomic blocks, and prepares the count matrix.
+ */
 Homog::Homog(std::string in_output_prefix, std::string in_blocks_path, std::vector<float> in_range,
              int in_min_cpgs, bool deb) {
     min_cpgs = in_min_cpgs;
@@ -62,30 +65,29 @@ Homog::Homog(std::string in_output_prefix, std::string in_blocks_path, std::vect
 
     nr_bins = range.size() - 1;
 
-    // load blocks file
+    // Load coordinates and CpG indices from the blocks file
     int r = read_blocks();
     nr_blocks = borders.size();
 
-    // Init arrays to zeros
+    // Allocate memory for the results matrix (Blocks x Bins)
     counts = init_array(nr_bins);
 }
 
 Homog::~Homog() {
-    //delete[] counts;
+    // Memory cleanup handled by the system or specific delete calls if uncommented.
 }
 
-
+/**
+ * @brief Parses the input stream of blocks and populates the internal structures.
+ * Validates format, CpG indices, and ensures monotonicity.
+ */
 int Homog::blocks_helper(std::istream &instream) {
-    //Iterate lines
     std::vector <std::string> tokens;
     std::string line;
     int cur_start = 0, cur_end = 0;
     int bi = 0;
     while (std::getline(instream, line)) {
-//        std::cerr << ++abc << std::endl;
-        
-
-        // skip empty lines and comments
+        // Skip whitespace and comment lines
         if (line.empty() || (!(line.rfind("#", 0)))) { continue; }
 
         tokens = line2tokens(line);
@@ -110,11 +112,6 @@ int Homog::blocks_helper(std::istream &instream) {
         } else if (cur_start < 1) {
             throw std::invalid_argument("Invalid block: startCpG < 1");
         }
-
-        // skip borders with <min_cpgs CpGs
-//        if ((cur_end - cur_start < min_cpgs)) {
-//            continue;
-//        }
 
         // if block is duplicated, continue
         if ((!borders.empty()) &&    // Can't be dup if it's first
@@ -146,26 +143,20 @@ int Homog::blocks_helper(std::istream &instream) {
     return 0;
 }
 
+/**
+ * @brief Loads the blocks file, handling both raw text and gzipped inputs.
+ */
 int Homog::read_blocks() {
-    /**
-     * Load blocks gzipped file into vector<int> borders_starts, borders_ends.
-     */
-
-
     std::cout << "loading blocks..." << std::endl;
 
     if (hasEnding(blocks_path, ".gz")) {
-        // Open the gzipped file:
         std::ifstream file(blocks_path, std::ios_base::in | std::ios_base::binary);
         boost::iostreams::filtering_streambuf <boost::iostreams::input> inbuf;
         inbuf.push(boost::iostreams::gzip_decompressor());
         inbuf.push(file);
         std::istream instream(&inbuf);
         blocks_helper(instream);
-        //Cleanup
         file.close();
-
-
     } else {
         std::ifstream instream(blocks_path);
         blocks_helper(instream);
@@ -181,10 +172,10 @@ int Homog::read_blocks() {
     return 0;
 }
 
-
+/**
+ * @brief Writes the accumulated counts to a TSV file and indexes it with tabix.
+ */
 void Homog::dump(int32_t *data, int width, std::string out_path) {
-    /**
-     */
     std::ofstream bofs;
     bofs.open(out_path);
     if (!(bofs.is_open())) {
@@ -206,13 +197,15 @@ void Homog::dump(int32_t *data, int width, std::string out_path) {
     }
     bofs.close();
 
-    // gzip:
+    // Finalize with tabix for genomic accessibility
     system(("bgzip -f " + out_path + " && tabix -p bed " + out_path + ".gz").c_str());
 }
 
-
+/**
+ * @brief Internal logic to calculate methylation fraction and update bin counts.
+ * Filters by min_cpgs and specified methylation range.
+ */
 void Homog::update_m2(int block_ind, std::string pat, int count) {
-
     int nrC = 0;
     int nrT = 0;
     for (int i = 0; i < pat.length(); i++) {
@@ -223,7 +216,6 @@ void Homog::update_m2(int block_ind, std::string pat, int count) {
     }
 
     if (nrC + nrT < min_cpgs) {
-//	    printf("nrC + nrT <  min_cpgs. %d + %d < %d\n", nrC, nrT, min_cpgs);
         return;
     }
 
@@ -234,19 +226,19 @@ void Homog::update_m2(int block_ind, std::string pat, int count) {
     int bin_ind = 0;
     for (bin_ind = 0; bin_ind < range.size() - 1; bin_ind++) {
         if ((meth >= range[bin_ind]) && (meth < range[bin_ind + 1])) {
-//	    printf("smaller than %f. returning bin_ind %d\n", range[bin_ind + 1], bin_ind);
             break;
         }
     }
     if (bin_ind == range.size() - 1) {
         bin_ind--;
     }
-//    std::cout << "block:" << block_ind << ", pat: " <<  pat << ", meth: " << meth << ", bin_ind:" <<  bin_ind << std::endl;
     counts[block_ind * nr_bins + bin_ind] += count;
 }
 
+/**
+ * @brief Helper to update counts for a specific block ID using a pattern string.
+ */
 void Homog::update_m2_blocks( std::string pat, int count, int block_id) {
-
     int nrC = 0;
     int nrT = 0;
     for (int i = 0; i < pat.length(); i++) {
@@ -257,7 +249,6 @@ void Homog::update_m2_blocks( std::string pat, int count, int block_id) {
     }
 
     if (nrC + nrT < min_cpgs) {
-//	    printf("nrC + nrT <  min_cpgs. %d + %d < %d\n", nrC, nrT, min_cpgs);
         return;
     }
 
@@ -268,7 +259,6 @@ void Homog::update_m2_blocks( std::string pat, int count, int block_id) {
     int bin_ind = 0;
     for (bin_ind = 0; bin_ind < range.size() - 1; bin_ind++) {
         if ((meth >= range[bin_ind]) && (meth < range[bin_ind + 1])) {
-//	    printf("smaller than %f. returning bin_ind %d\n", range[bin_ind + 1], bin_ind);
             break;
         }
     }
@@ -276,39 +266,35 @@ void Homog::update_m2_blocks( std::string pat, int count, int block_id) {
         bin_ind--;
     }
     counts[block_id * nr_bins + bin_ind] += count;
-//    for (Block block : cur_block_queue){
-//
-//    }
 }
 
+/**
+ * @brief Updates a single block index.
+ */
 void Homog::update_block(int block_ind, std::string pat, int32_t count) {
-
-//    std::cerr << block_ind << ") updating: " << pat << std::endl;
-
     int len = pat.length();
-    // skip reads with less then min_cpgs sites:
     if (len < min_cpgs) {
-//	printf("%d < %d\n", len, min_cpgs);
         return;
     }
-
     update_m2(block_ind, pat, count);
 }
+
+/**
+ * @brief Processes a read pattern against all blocks currently in the active queue.
+ * Handles sub-string extraction for reads partially overlapping block boundaries.
+ */
 void Homog::update_blocks(std::string pat, int32_t count, int read_start, int read_end) {
-
-//    std::cerr << block_ind << ") updating: " << pat << std::endl;
-
     int len = pat.length();
     // skip reads with less then min_cpgs sites:
     if (len < min_cpgs) {
-//	printf("%d < %d\n", len, min_cpgs);
         return;
     }
+
+    // Check intersection with all blocks in the sliding window queue
     for (Block block : cur_block_queue){
         if (intersects_block(read_start, read_end, block.start, block.end)){
             if ((read_start >= block.start) && (read_start < block.end)) {
                 int head_size = std::min(block.end - read_start, (int) pat.length());
-//            pat.substr(head_size);
                 std::string temp_pat = pat.substr(0, head_size);
                 update_m2_blocks(temp_pat, (int32_t) count, block.id);
             } else if (read_end < block.start) {
@@ -320,7 +306,6 @@ void Homog::update_blocks(std::string pat, int32_t count, int read_start, int re
                 } else {
                     pat_len = read_end - block.start + 1;
                 }
-//                int pat_len = std::min(block.end, read_end) - block.start + 1;
                 std::string temp_pat = pat.substr(block.start - read_start, pat_len);
                 update_m2_blocks(temp_pat, (int32_t) count, block.id);
             }
@@ -400,32 +385,19 @@ bool hasEnding(std::string const &fullString, std::string const &ending) {
     }
 }
 
+/**
+ * @brief Entry point for parsing a PAT file.
+ * Iterates through standard input, processes each line, and dumps results.
+ */
 void Homog::parse(std::string pat_path) {
-
     try {
-
-        // Open the gzipped pat file:
-//        std::ifstream file(pat_path, std::ios_base::in | std::ios_base::binary);
-//        boost::iostreams::filtering_streambuf <boost::iostreams::input> inbuf;
-//        inbuf.push(boost::iostreams::gzip_decompressor());
-//        inbuf.push(file);
-//        std::istream instream(&inbuf);
-//        if (!(instream)) {
-//            printf("not opened right\n");
-//            return;
-//        }
-
-
         int line_i = 0;
         std::ifstream infile(pat_path);
 
         for (std::string line_str; std::getline(std::cin, line_str);) {
-//        for (std::string line_str; std::getline(infile, line_str);) {
             if (line_str.empty()) { continue; } // skip empty lines
 
             std::vector <std::string> tokens = line2tokens(line_str);
-//            std::cerr << line_i << std::endl;
-//	    print_vec(tokens); // TODO: del
             if (tokens.size() < 4) {
                 throw std::invalid_argument("too few columns in file, line " + std::to_string(line_i));
             } else if (!(tokens.empty())) {
@@ -438,12 +410,12 @@ void Homog::parse(std::string pat_path) {
                 std::cerr << "something went wrong... tokens is empty" << std::endl;
             }
             line_i++;
-//            std::cerr << line_i << std::endl;
+
+            // Progress reporting
             if (line_i % 10000000 == 0) {
                 std::cerr << line_i / 1000000 << "M" << std::endl;
             }
         }
-        //file.close();
 
         // dump reads lengths file:
         dump(counts, nr_bins, output_prefix + ".homog");
@@ -456,5 +428,3 @@ void Homog::parse(std::string pat_path) {
         return;
     }
 }
-
-

@@ -8,7 +8,7 @@ import numpy as np
 import pandas as pd
 import subprocess
 
-from asm_catalog import choose_blocks_by_fdr_bh
+from fdr_corection_allele_homog import choose_blocks_by_fdr_bh
 from asm_utils import run_command, get_tissue_file_dict
 
 

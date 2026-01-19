@@ -1,3 +1,18 @@
+"""
+Bimodal Methylation Block Segmentor
+-----------------------------------
+This script identifies genomic regions (blocks) exhibiting sequence-dependent
+bimodal methylation patterns (co-occurrence of highly methylated and highly
+unmethylated fragments). It utilizes parallel processing to traverse the genome
+by chromosome, leveraging tabix for efficient data retrieval from PAT files.
+
+Key Capabilities:
+- Parallelized identification of bimodal regions across the human genome.
+- Dynamic filtering based on methylated (M) and unmethylated (U) read proportions.
+- Automated genomic chunking and sliding window analysis to optimize memory usage.
+- Integration with wgbstools for pattern (PAT) file processing and block dumping.
+"""
+
 import argparse
 import subprocess
 
@@ -11,7 +26,7 @@ import pandas as pd
 import sys
 import os
 
-tmp_path = "/cs/cbio/jon/projects/PyCharmProjects/wgbs_tools/tmp_files/"
+tmp_path = "tmp_files/"
 
 class PatProcessorParams:
     skip = None
@@ -38,66 +53,9 @@ class PatProcessorParams:
         self.min_sites_per_read = min_sites_per_read
         self.window_size = window_size
 
-# def merge_df_list(in_files, num_threads, pcount, max_block_size, dflist):
-#     j = 0
-#     while len(dflist) > 1:
-#         p = Pool(num_threads)
-#         params = []
-#         for i in range(1, len(dflist), 2):
-#             prev_df, prev_chrom = dflist[i - 1]
-#             cur_df, cur_chrom = dflist[i]
-#             if prev_chrom == cur_chrom:
-#                 params.append([prev_df, cur_df, in_files, pcount,
-#                                max_block_size, cur_chrom])
-#         arr = p.starmap(stitch_2_dfs, params)
-#         p.close()
-#         p.join()
-#
-#         last_df = [dflist[-1]] if len(dflist) % 2 else []
-#         dflist = arr + last_df
-#         j += 1
-#     return dflist[0]
-
-
-# def dump_result(df):
-#     if df is None:
-#         eprint('Empty blocks array')
-#         return
-#
-#     df = np2pd(df)
-#     df = insert_genomic_loci(df, self.gr)
-#     dump_table(df, self.args.out_path)
-
 
 def np2pd(arr):
     return pd.DataFrame({'startCpG': arr[:-1], 'endCpG': arr[1:]})
-
-
-# def stitch_2_dfs(b1, b2, betas, pcount, max_block_size, chrom):
-#     patch1_size = 50
-#     path2_size = 50
-#     n1 = b1[-1] - b1[0]
-#     n2 = b2[-1] - b2[0]
-#     while patch1_size <= n1 and path2_size <= n2:
-#         # calculate blocks for patch:
-#         skip = b1[-1] - patch1_size - 1
-#         nsites = patch1_size + path2_size
-#         patch, _ = segment_process(betas, chrom, skip, nsites, pcount, max_block_size)
-#
-#         # find the overlaps
-#         if ((len(b1) == 0 or len(patch) == 0) or is_overlap(b1, patch)) and ((len(b2) == 0 or len(patch) == 0) or is_overlap(patch, b2)):
-#             # successful stitch with patches
-#             return (merge2(merge2(b1, patch), b2), chrom)
-#         else:
-#             # failed stitch - increase patch sizes
-#             if not is_overlap(b1, patch):
-#                 patch1_size = increase_patch(patch1_size, n1)
-#             if not is_overlap(patch, b2):
-#                 path2_size = increase_patch(path2_size, n2)
-#
-#     # Failed: could not stich the two chuncks
-#     eprint('ERROR: no overlaps at all!!', is_overlap(b1, patch), is_overlap(patch, b2))
-#     raise IllegalArgumentError('Stitching Failed! Try running with bigger chunk size')
 
 
 def is_overlap(b1, b2):
@@ -118,54 +76,6 @@ def increase_patch(pre_size, maxval):
     if pre_size == maxval:
         return maxval + 1
     return int(min(pre_size * 2, maxval))
-
-
-# def segment_process(in_files, chrom, skip, nsites, pcount, max_block_size):
-#     assert nsites, 'trying to segment an empty interval'.format(skip, nsites)
-#     if nsites == 1:
-#         return np.array([skip, skip + 1])
-#     try:
-#         # start_time = time.time()
-#
-#         tmp_path = "/cs/cbio/jon/projects/PyCharmProjects/wgbs_tools/tmp_files/"
-#         new_file_list = []
-#         for in_file in in_files:
-#             cur_basename = os.path.basename(in_file)
-#             if cur_basename.endswith(".gz"):
-#                 cur_basename = cur_basename[:-7]
-#             else:
-#                 cur_basename = cur_basename[:-4]
-#             cur_basename = cur_basename + "_{}_{}.pat".format(chrom, skip)
-#             out_path = tmp_path + cur_basename
-#             check_empty_cmd = "tabix {} {}:{}-{} | head | wc -l".format(in_file, chrom, str(skip), str(skip + nsites),
-#                                                                         out_path)
-#             tabix_cmd = "tabix {} {}:{}-{} > {}".format(in_file, chrom, str(skip), str(skip + nsites), out_path)
-#             is_empty_out_str = subprocess.check_output(check_empty_cmd, shell=True).decode().split()
-#             num_lines_count = int(is_empty_out_str[-1])
-#             if num_lines_count > 0:
-#                 p = subprocess.Popen(tabix_cmd, shell=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-#                 output, error = p.communicate()
-#                 new_file_list.append(out_path)
-#         if len(new_file_list) > 0:
-#             data_files = ' '.join(new_file_list)
-#             cmd = '{} {} -s {} -n {}'.format(pat_segment_tool, data_files, skip,
-#                                                           nsites, max_block_size, pcount)
-#             brd_str = subprocess.check_output(cmd, shell=True).decode().split()
-#             for data_file in new_file_list:
-#                 try:
-#                     os.remove(data_file)
-#                 except Exception as e:
-#                     eprint("failed to remove file in s={}, n={}".format(skip, nsites))
-#                     eprint(e)
-#             # eprint('thread ({}, {}), time: {}'.format(skip, nsites, timedelta(seconds=time.time() - start_time)))
-#             # x = np.array(list(map(int, brd_str))) + skip + 1
-#             return (np.array(list(map(int, brd_str))), chrom)
-#         else:
-#             return (np.array([]), chrom)
-#
-#     except Exception as e:
-#         eprint('Failed in s={}, n={}'.format(skip, nsites))
-#         raise e
 
 
 def bimodal_switch_process(in_files, chrom, pat_processor_params):
@@ -258,35 +168,6 @@ def break_to_chunks(start, end, step):
             sls = sls[:-1]
             nls = np.concatenate([nls[:-2], [np.sum(nls[-2:])]])
     return sls, nls
-
-
-# def break_to_chunks_by_chrome(args, in_files, num_threads, pcount, max_block_size, step_size):
-#     chrom_list = ["chr1", "chr2", "chr3", "chr4", "chr5", "chr6", "chr7", "chr8", "chr9", "chr10", "chr11",
-#                   "chr12", "chr13", "chr14", "chr15", "chr16", "chr17", "chr18", "chr19", "chr20", "chr21",
-#                   "chr22", "chrX", "chrY", "chrM"]
-#     cpg_file_path = GenomeRefPaths().dict_path
-#     # chrom_list = ["chr11"]
-#     chunks_list = []
-#     for chrom in chrom_list:
-#         tabix_head_cmd = "tabix {} {} | head -1".format(cpg_file_path, chrom)
-#         tabix_tail_cmd = "tabix {} {} | tail -1".format(cpg_file_path, chrom)
-#         head_str = subprocess.check_output(tabix_head_cmd, shell=True).decode().split()
-#         tail_str = subprocess.check_output(tabix_tail_cmd, shell=True).decode().split()
-#         start_ind = int(head_str[-1])
-#         end_ind = int(tail_str[-1])
-#         skip_list, nsites_list = break_to_chunks(start_ind, end_ind, step_size)
-#
-#         params = [(in_files, chrom, si, ni, pcount, max_block_size)
-#                   for si, ni in zip(skip_list, nsites_list)]
-#
-#     p = Pool(num_threads)
-#     arr = p.starmap(segment_process, chunks_list)
-#     p.close()
-#     p.join()
-#
-#     arr = [x for x in arr if len(x[0]) > 0]
-#     df, _ = merge_df_list(in_files, num_threads, pcount, max_block_size, arr)
-#     SegmentByChunks(args, [], None).dump_result(df)
 
 
 def break_to_chunks_by_chrome_bimodal(args, in_files, num_threads, step_size):

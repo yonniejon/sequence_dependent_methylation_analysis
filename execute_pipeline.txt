@@ -1,16 +1,18 @@
+# ==============================================================================
+# 1. INITIAL SEGMENTATION & TABIX INDEXING
+# ==============================================================================
+
+# Identify regions exhibiting at least 25% methylated and unmethylated DNA fragments
 for f in atlas_data/*pat.gz; do
 	f_base=$(basename $f);
 	f_base=$f_base:r:r;
 	out_file="sd_asm_analysis/$f_base.blocks.tsv";
-	out_file_gz="imprint_atlas_data/$f_base.blocks.tsv.gz";
 	if [ ! -f "$out_file" ]; then
 		sbatch --killable --requeue --wrap="python3 segment_pats.py --pats $f -o $out_file --min_u_threshold 0.25 --max_u_threshold 0.75 --min_m_threshold 0.25 --max_m_threshold 0.75 --window_size 4 --homog_read_cutoff 0.65 --genome hg38" -c16 --mem=10g -t 0-0:40 -o slurm-segment-PAT-$f_base-%j.out -J segment-pats-$f_base;
 	fi
 done
 
 for f in sd_asm_analysis/*blocks.tsv; do
-	f_base=$(basename $f);
-	f_base=$f_base:r:r;
 	cat header_file.txt $f | sponge $f;
 done
 
@@ -24,12 +26,17 @@ for f in sd_asm_analysis/*blocks.tsv; do
 	fi
 done
 
+# ==============================================================================
+# 2. BIMODAL SIGNIFICANCE TESTING (EM ESTIMATION)
+# ==============================================================================
+
+# For each sample/region, use EM to estimate emission probabilities and LLR test
 for f in imprint_atlas_data/*blocks.tsv.gz; do
 	f_base=$(basename $f);
 	f_base=$f_base:r:r:r;
 	out_file="imprint_atlas_data/$f_base.blocks.significant.tsv";
 	if [ ! -f "$out_file" ]; then
-		sbatch  --killable --requeue --wrap="wgbstools test_bimodal atlas_data/$f_base.pat.gz -L $f --threads 16 --out_file $out_file" -c16 --mem=8g -t 0-6 -o slurm-find-sginificant-bimodal-regions-$f_base-%j.out -J significant-bimodal-$f_base
+		sbatch --killable --requeue --wrap="wgbstools test_bimodal atlas_data/$f_base.pat.gz -L $f --threads 16 --out_file $out_file" -c16 --mem=8g -t 0-6 -o slurm-find-sginificant-bimodal-regions-$f_base-%j.out -J significant-bimodal-$f_base
 	fi
 done
 
@@ -43,7 +50,11 @@ for f in sd_asm_analysis/*blocks.significant.tsv; do
 	fi
 done
 
+# ==============================================================================
+# 3. REGION EXTENSION & UNIFICATION
+# ==============================================================================
 
+# Extend regions based on single CpGs
 for f in sd_asm_analysis/*blocks.significant.tsv.gz; do
 	f_base=$(basename $f);
 	f_base=$f_base:r:r:r:r;
@@ -53,7 +64,7 @@ for f in sd_asm_analysis/*blocks.significant.tsv.gz; do
 	fi
 done
 
-
+# Convert extended sites to formatted BED and index
 for f in sd_asm_analysis/*.extended_sites.tsv; do
 	f_base=$(basename $f);
 	f_base=$f_base:r:r;
@@ -64,8 +75,13 @@ for f in sd_asm_analysis/*.extended_sites.tsv; do
 	fi
 done
 
-gunzip -c GGSE186458.blocks.min_len_3.205.bed | awk '{if($5 - $4 > 2){{print $1"\t"$4}{print $1"\t"$5}}}' | sort -k2,2n -u >GSE186458.blocks.min_len_3.205.min_len_3.tsv
+# Download and prep universal atlas boundaries
+# https://www.ncbi.nlm.nih.gov/geo/download/?acc=GSE186458&format=file&file=GSE186458%5Fblocks%2Es207%2Ehg38%2Ebed%2Egz
+gunzip -c GSE186458_blocks.s207.hg38.bed.gz | \
+    awk '{if($5 - $4 > 2){ print $1"\t"$4; print $1"\t"$5 }}' | \
+    sort -k2,2n -u > GSE186458.blocks.min_len_3.205.min_len_3.tsv
 
+# Unify boundaries with Loyfer et al. atlas
 for f in sd_asm_analysis/*blocks.significant.extended.tsv.gz; do
 	f_base=$(basename $f);
 	f_base=$f_base:r:r:r:r:r;
@@ -75,6 +91,9 @@ for f in sd_asm_analysis/*blocks.significant.extended.tsv.gz; do
 	fi
 done
 
+# ==============================================================================
+# 4. FINAL FORMATTING & HOMOG ANALYSIS
+# ==============================================================================
 
 for f in sd_asm_analysis/*unified.blocks.tsv; do
 	f_base=$(basename $f);
@@ -85,7 +104,7 @@ for f in sd_asm_analysis/*unified.blocks.tsv; do
 	fi
 done
 
-
+# Final conversion and header injection
 for f in sd_asm_analysis/*.unified.large.tsv; do
 	f_base=$(basename $f);
 	f_base=$f_base:r:r:r;
@@ -105,6 +124,9 @@ for f in sd_asm_analysis/*.formatted.blocks.tsv.gz; do
 done
 
 
+# homog script uses cpp to iterate over pat files and count the number of unmethylated and methyalted fragments. Methyalted and
+# unmethyalted fragments are determined by methylation proportion of the fragment as defined by -r parameter of the script.
+# In this case, we use 25% with a min length of 3 CpGs per fragment.
 for f in sd_asm_analysis/*.formatted.blocks.tsv.gz; do
 	f_base=$(basename $f);
 	f_base=$f_base:r:r:r:r;
@@ -114,13 +136,15 @@ for f in sd_asm_analysis/*.formatted.blocks.tsv.gz; do
 	fi
 done
 
-
+# run create_bimodal.sh . Sanity check requiring at least 20% methylated and 20% unmethyalted fragments with at least
+# 3 CpGs per fragment in the final region as well as requires at least 25 observed fragments with at least 3 CpGs in the
+# sample/region.
 for f in sd_asm_analysis/homog/*homog.gz; do
 	fbname=$(basename "$f" | cut -d. -f1);
 	echo $fbname;
 	out_file="sd_asm_analysis/homog/$fbname.bimodal.tsv";
 	if [ ! -f "$out_file" ]; then
-		sbatch --killable --requeue --wrap="sd_asm_analysis/homog/create_bimodal.sh $f $fbname" -c1 --mem=10g -t 0-1 -o slurm-create-bimodal-blocks-$fbname-%j.out -J create-bimodal-$fbname;
+		sbatch --killable --requeue --wrap="create_bimodal.sh $f $fbname" -c1 --mem=10g -t 0-1 -o slurm-create-bimodal-blocks-$fbname-%j.out -J create-bimodal-$fbname;
 	fi
 done
 
@@ -144,6 +168,7 @@ for f in atlas_data/*pat.gz; do
 done
 
 
+# recalculate bimodal p-values after adjusted region start/end sites.
 for f in sd_asm_analysis/homog/homog_aligned/*homog.gz; do
 	f_base=$(basename $f);
 	f_base=$f_base:r:r;
@@ -163,23 +188,12 @@ for f in sd_asm_analysis/homog/homog_aligned/*.print_all.bimodal_blocks.tsv; do
 	fi
 done
 
+# ==============================================================================
+# 5. Allele-specific analysis per sample
+# ==============================================================================
 
-
-for f in atlas_data/*.bam; do
-	f_base=$(basename $f);
-	f_base=$f_base:r;
-	out_file="sd_asm_analysis/homog/homog_aligned/all_snps/${f_base}.allele.homog.gz"
-	if [ ! -f "$out_file" ]; then
-		sbatch --killable --wrap="python3 homog_by_allele.py --snps_file all_gnom_ad_in_bimodal.snps_file.txt.gz --regions_file all_gnom_ad_in_bimodal.snps_file.enlarged_regions.bed.gz -t 0.3501,0.65 $f --threads 8 -o sd_asm_analysis/homog/homog_aligned/all_snps/ --min_cpg 3" -c8 --mem=16g -t 0-5 -o slurm-create-homog-allele-$f_base-%j.out -J create-homog-allele-$f_base
-	fi
-done
-
-
-
-
-
-cat sd_asm_analysis/homog/homog_aligned/all_snps/HOWTO      
-tabix gnomAD/gnomAD.all.hg19.bed.gz -R ../../all_blocks/all_blocks.sorted.tsv.gz | awk '($7 > 0.01 && $7 < 0.99)' > all_gnom_ad_in_bimodal.bed
+# cat sd_asm_analysis/homog/homog_aligned/all_snps/HOWTO
+tabix gnomAD/gnomAD.all.hg38.bed.gz -R ../../all_blocks/all_blocks.sorted.tsv.gz | awk '($7 > 0.01 && $7 < 0.99)' > all_gnom_ad_in_bimodal.bed
 cat all_gnom_ad_in_bimodal.bed | awkt '{print $1, $2, $5, $6}' > all_gnom_ad_in_bimodal.snps_file.txt
 sort -k1,1 -k2,2n all_gnom_ad_in_bimodal.snps_file.txt -o all_gnom_ad_in_bimodal.snps_file.txt
 sort -u all_gnom_ad_in_bimodal.snps_file.txt | sort -k1,1 -k2,2n > all_gnom_ad_in_bimodal.snps_file.unique.txt
@@ -191,14 +205,14 @@ zcat all_gnom_ad_in_bimodal.snps_file.txt.gz | awkt '{print $1, $2-1000, $2+1000
 bgzip all_gnom_ad_in_bimodal.snps_file.enlarged_regions.bed
 tabix -p bed all_gnom_ad_in_bimodal.snps_file.enlarged_regions.bed.gz
 
-
-for f in atlas_dta/*.bam; do
-        f_base=$(basename $f);
-        f_base=$f_base:r;
-        out_file="sd_asm_analysis/homog/homog_aligned/all_snps/${f_base}.allele.homog.gz"
-        if [ ! -f "$out_file" ]; then
-                sbatch --killable --wrap="python3 homog_by_allele.py --snps_file all_gnom_ad_in_bimodal.snps_file.txt.gz --regions_file all_gnom_ad_in_bimodal.snps_file.enlarged_regions.bed.gz -t 0.3501,0.65 $f --threads 8 -o sd_asm_analysis/homog/homog_aligned/all_snps/ --min_cpg 3 --genome hg38" -c8 --mem=16g -t 0-10 -o slurm-create-homog-allele-$f_base-%j.out -J create-homog-allele-$f_base
-        fi
+# Calculate the number of unmethylated and methylated DNA fragments per allele (defined in all_gnom_ad_in_bimodal.snps_file.txt.gz)
+for f in atlas_data/*.bam; do
+	f_base=$(basename $f);
+	f_base=$f_base:r;
+	out_file="sd_asm_analysis/homog/homog_aligned/all_snps/${f_base}.allele.homog.gz"
+	if [ ! -f "$out_file" ]; then
+		sbatch --killable --wrap="python3 homog_by_allele.py --snps_file all_gnom_ad_in_bimodal.snps_file.txt.gz --regions_file all_gnom_ad_in_bimodal.snps_file.enlarged_regions.bed.gz -t 0.3501,0.65 $f --threads 8 -o sd_asm_analysis/homog/homog_aligned/all_snps/ --min_cpg 3" -c8 --mem=16g -t 0-5 -o slurm-create-homog-allele-$f_base-%j.out -J create-homog-allele-$f_base
+	fi
 done
 
 

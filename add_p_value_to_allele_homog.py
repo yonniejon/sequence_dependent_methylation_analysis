@@ -19,14 +19,8 @@ if __name__ == '__main__':
     file_name = options.in_file
     base_name = os.path.basename(file_name).split(".")[0]
     sample_name = base_name.split(".")[0]
-    # input_dir = "/cs/zbbio/jrosensk/blocks_masked_imprinting/homog/homog_aligned/all_snps"
     file_suffix = options.file_suffix
     expected_cols = ["chrom", "start", "let1", "let2", "u1", "x1", "m1", "u2", "x2", "m2"]
-    # out_path = os.path.join(input_dir, f"{sample_name}{file_suffix}")
-    # for filename in os.listdir(input_dir):
-    #     if not filename.endswith(file_suffix):
-    #         continue
-    #     full_path = os.path.join(input_dir, filename)
     non_blank_threshold = 2
     header_df = pd.read_csv(file_name, sep="\t", header=None, nrows=3)
     if len(header_df.columns) > len(expected_cols):

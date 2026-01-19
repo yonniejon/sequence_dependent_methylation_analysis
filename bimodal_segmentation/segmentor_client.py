@@ -1,3 +1,19 @@
+
+"""
+DNA Methylation Segmentation Pipeline
+------------------------------------
+This script provides a framework for large-scale segmentation of WGBS (Whole Genome
+Bisulfite Sequencing) sample. It breaks genomic regions into manageable chunks,
+processes them in parallel using multi-processing pools, and employs a 'stitching'
+algorithm to merge results at chunk boundaries, ensuring continuous and consistent
+genomic block definitions across the entire genome.
+
+Key Capabilities:
+- Parallel segmentation using subprocess calls to low-level C++ tools.
+- Dynamic 'patch' based stitching to resolve block boundaries between chunks.
+- Integration with genomic reference dictionaries to map CpG indices to genomic coordinates.
+"""
+
 import os.path as op
 import numpy as np
 import pandas as pd

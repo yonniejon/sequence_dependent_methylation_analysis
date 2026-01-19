@@ -1,5 +1,25 @@
 #!/usr/bin/python3 -u
 
+"""
+Allele-Specific Methylation Homogeneity Analyzer
+------------------------------------------------
+This script quantifies DNA methylation patterns across specific alleles by
+integrating WGBS data (BAM files) with known SNP locations. It calculates the
+distribution of unmethylated, partially methylated, and fully methylated
+fragments (UXM) for each allele, enabling the detection of Allele-Specific
+Methylation (ASM) influenced by genetic variants.
+
+Key Capabilities:
+- Parallel Allele Processing: Distributes genomic regions across multiple
+  threads to analyze BAM files against SNP libraries efficiently.
+- SNP-Guided Analysis: Uses tabix-indexed SNP files to distinguish between
+  reference and alternative alleles within read fragments.
+- Flexible Filtering: Supports custom mapping quality (MAPQ) thresholds,
+  SAM flag exclusions, and minimum CpG site requirements per read.
+- Fragment Classification: Categorizes reads into "U" (unmethylated), "X"
+  (intermediate), or "M" (methylated) bins based on user-defined thresholds.
+"""
+
 import os
 import os.path as op
 import subprocess
@@ -30,7 +50,6 @@ def proc_chr(input_path, out_path_name, region, genome, paired_end, ex_flags, ma
     # Run patter tool 'bam' mode on a single chromosome
 
     out_path = out_path_name + f'.output.{FILE_SUF}'
-    out_directory = os.path.dirname(out_path)
     bed_file = None
 
     # use samtools to extract only the reads from 'chrom'
@@ -78,43 +97,11 @@ class HomogByAllele:
         if not (op.isdir(self.out_dir)):
             raise IllegalArgumentError('Invalid output dir: {}'.format(self.out_dir))
 
-    # def set_regions(self):
-        # if self.gr.region_str:
-            # return [self.gr.region_str]
-        # else:
-            # cmd = 'samtools idxstats {} | cut -f1 '.format(self.bam_path)
-            # p = subprocess.Popen(cmd, shell=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-            # output, error = p.communicate()
-            # if p.returncode or not output:
-                # print(cmd)
-                # print("Failed with samtools idxstats %d\n%s\n%s" % (p.returncode, output.decode(), error.decode()))
-                # print('falied to find chromosomes')
-                # return []
-            # nofilt_chroms = output.decode()[:-1].split('\n')
-            # filt_chroms = [c for c in nofilt_chroms if 'chr' in c]
-            # if not filt_chroms:
-                # filt_chroms = [c for c in nofilt_chroms if c in CHROMS]
-            # else:
-                # filt_chroms = [c for c in filt_chroms if re.match(r'^chr([\d]+|[XYM])$', c)]
-            # if not filt_chroms:
-                # eprint('Failed retrieving valid chromosome names')
-                # raise IllegalArgumentError('Failed')
-            # return filt_chroms
-
     def set_regions(self):
         # if user specified a region, just use it
         if self.gr.region_str:
             return [self.gr.region_str]
 
-        # get all chromosomes present in the bam file header
-        # cmd = f'samtools idxstats {self.bam_path} | cut -f1 '
-        # p = subprocess.Popen(cmd, shell=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-        # output, error = p.communicate()
-        # if p.returncode or not output:
-        #     eprint("[wt acc] Failed with samtools idxstats %d\n%s\n%s" % (p.returncode, output.decode(), error.decode()))
-        #     eprint(cmd)
-        #     eprint('[wt acc] falied to find chromosomes')
-        #     return []
         bam_chroms = ['chr1', 'chr2', 'chr3', 'chr4', 'chr5', 'chr6', 'chr7', 'chr8', 'chr9', 'chr10', 'chr11', 'chr12', 'chr13', 'chr14', 'chr15', 'chr16', 'chr17', 'chr18', 'chr19', 'chr20', 'chr21', 'chr22', 'chrX', 'chrY', 'chrM']# output.decode()[:-1].split('\n')
 
         # get all chromosomes from the reference genome:
@@ -181,12 +168,6 @@ class HomogByAllele:
         subprocess_wrap(cmd, False)
         print(datetime.datetime.now().isoformat() + ": finished cat of files")
 
-        # sort_cmd = 'samtools sort -o {} -T {} {}'.format(final_path, out_directory, final_path_unsorted)
-        # print(datetime.datetime.now().isoformat() + ': starting sort of file')
-        # sort_process = subprocess.Popen(shlex.split(sort_cmd), stdout=subprocess.PIPE, stdin=subprocess.PIPE)
-        # stdout, stderr = sort_process.communicate()
-        # print(datetime.datetime.now().isoformat() + ": finished sort of file")
-        # remove all small files
         list(map(os.remove, [l for l in res]))
 
 
@@ -202,10 +183,25 @@ def add_cpg_args(parser):
 
 
 def main():
-    """
-    .
-    """
-    parser = argparse.ArgumentParser(description=main.__doc__)
+    help_summary = """
+        Allele-Specific Methylation (ASM) Analyzer
+
+        This tool integrates WGBS BAM files with SNP data to quantify methylation 
+        patterns (UXM) on a per-allele basis. It determines if unmethylated (U), 
+        intermediate (X), or methylated (M) fragments are linked to specific 
+        genetic variants.
+
+        The pipeline:
+        1. Extracts reads from BAM files using samtools.
+        2. Filters by MAPQ, SAM flags, and SNP-containing regions.
+        3. Categorizes reads into U(nmethylated) (mi)X(ed) or M(ethylated), UXM, bins based on provided thresholds.
+        4. Outputs a tabix-indexed file containing allele-specific counts.
+        """
+    parser = argparse.ArgumentParser(
+        description=help_summary,
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog="Example: python3 homog_by_allele.py --snps_file snps.txt.gz -t 0.35,0.65 sample.bam"
+    )
     parser = add_args(parser)
     parser = add_cpg_args(parser)
     args = parser.parse_args()
