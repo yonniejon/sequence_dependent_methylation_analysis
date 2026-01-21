@@ -8,6 +8,13 @@ This pipeline processes aligned methylation data (BAM) to extract sequence featu
 
 ---
 
+## WGBSTOOLS Requirement
+This pipeline depends on wgbstools.
+Install here: [wgbstools](https://github.com/nloyfer/wgbs_tools])
+
+## Other Requirements
+bedtools, samtools, R coloc package, tabix, blat
+
 ## Data Sources
 
 The analysis is based on the human DNA methylation atlas.

@@ -1,6 +1,7 @@
 # ==============================================================================
 # 1. INITIAL SEGMENTATION & TABIX INDEXING
 # ==============================================================================
+WGBSTOOLS_DIR="YOUR_WGBSTOOLS_DIRECTORY"
 
 # Identify regions exhibiting at least 25% methylated and unmethylated DNA fragments
 for f in atlas_data/*pat.gz; do
@@ -31,10 +32,10 @@ done
 # ==============================================================================
 
 # For each sample/region, use EM to estimate emission probabilities and LLR test
-for f in imprint_atlas_data/*blocks.tsv.gz; do
+for f in atlas_data/*blocks.tsv.gz; do
 	f_base=$(basename $f);
 	f_base=$f_base:r:r:r;
-	out_file="imprint_atlas_data/$f_base.blocks.significant.tsv";
+	out_file="atlas_data/$f_base.blocks.significant.tsv";
 	if [ ! -f "$out_file" ]; then
 		sbatch --killable --requeue --wrap="wgbstools test_bimodal atlas_data/$f_base.pat.gz -L $f --threads 16 --out_file $out_file" -c16 --mem=8g -t 0-6 -o slurm-find-sginificant-bimodal-regions-$f_base-%j.out -J significant-bimodal-$f_base
 	fi
@@ -152,7 +153,7 @@ done
 cat sd_asm_analysis/homog/*bimodal.tsv > sd_asm_analysis/homog/all_blocks/all_blocks.tsv
 cat sd_asm_analysis/homog/all_blocks/all_blocks.tsv | awk '{print($1 "\t" $2 "\t" $3 "\t" $4 "\t" $5)}' > sd_asm_analysis/homog/all_blocks/all_bimodal_blocks.tsv
 sort -u sd_asm_analysis/homog/all_blocks/all_bimodal_blocks.tsv | sort -k4,4n > sd_asm_analysis/homog/all_blocks/all_blocks.sorted.tsv
-cat ../header_file.txt imprint_atlas_data/homog/all_blocks/all_blocks.sorted.tsv | sponge sd_asm_analysis/homog/all_blocks/all_blocks.sorted.tsv
+cat ../header_file.txt atlas_data/homog/all_blocks/all_blocks.sorted.tsv | sponge sd_asm_analysis/homog/all_blocks/all_blocks.sorted.tsv
 bgzip sd_asm_analysis/homog/all_blocks/all_blocks.sorted.tsv
 tabix -p bed sd_asm_analysis/homog/all_blocks/all_blocks.sorted.tsv.gz
 
@@ -163,7 +164,7 @@ for f in atlas_data/*pat.gz; do
 	f_base=$f_base:r:r;
 	homog_file="sd_asm_analysis/homog/homog_aligned/${f_base}.homog.gz";
 	if [ ! -f "$homog_file" ]; then
-		sbatch --killable --requeue --wrap="zcat atlas_data/$f_base.pat.gz | homog/homog - imprint_atlas_data/homog/homog_aligned/$f_base -r 0,.251,.75,1 -l 3 -b sd_asm_analysis/homog/all_blocks/all_blocks.sorted.tsv.gz" -c1 --mem=10g -t 0-1 -o slurm-homog-aligned-$f_base-%j.out;
+		sbatch --killable --requeue --wrap="zcat atlas_data/$f_base.pat.gz | homog/homog - data/homog/homog_aligned/$f_base -r 0,.251,.75,1 -l 3 -b sd_asm_analysis/homog/all_blocks/all_blocks.sorted.tsv.gz" -c1 --mem=10g -t 0-1 -o slurm-homog-aligned-$f_base-%j.out;
 	fi
 done
 
@@ -215,12 +216,104 @@ for f in atlas_data/*.bam; do
 	fi
 done
 
+for f in sd_asm_analysis/homog/homog_aligned/all_snps/*.allele.homog.pval.gz; do
+    f_base=$(basename $f);
+    f_base=$f_base:r:r:r:r;
+    out_file="sd_asm_analysis/homog/homog_aligned/all_snps/$f_base.hetero_status.tsv";
+    sbatch --killable --wrap="create_hetero_status.sh $f $out_file;" -c1 --mem=2g -t 0-1 -o slurm-create-hetero_status-$f_base-%j.out -J create-hetero_status-$f_base
+done
 
-for f in sd_asm_analysis/homog/homog_aligned/all_snps/*allele.homog.gz; do
+python3 find_super_hetero.py
+sbatch --wrap="python3 -u simple_meqtl.py --num_threads 16" -c16 --mem=50g -t 0-6 -o slurm-create-grouped-sd-asm-files-%j.out -J grouped-sd-asm-files
+cd sd_asm_analysis/homog/homog_aligned/all_snps/
+cat snp_num_hetero.tsv | awkt '{if($3 > 130 && $4 < 5){print $1, $2, $2+1, $3, $4}}' > snps_hetero_above_130_less_than_5_homoz.tsv
+
+cat full_sd_asm_all_cell_types.tsv | awkt '{if(NR==1){print $0}else{ sum_b=0; for(i=3; i<=NF; i++){ if($i == "B"){sum_b+=1}} if(sum_b >0){print $0} }}' > full_sd_asm_all_cell_types.at_least_one_B.tsv
+cat full_sd_asm_all_cell_types.at_least_one_B.tsv | awkt -F"\t" '{to_p=$1"\t"$2"\t"$2+1; for(i=3; i<=NF; i++){ to_p=to_p"\t"$i} print to_p; }' > full_sd_asm_all_cell_types.at_least_one_B.bed
+
+zcat full_sd_asm_all_cell_types.at_least_one_B.tsv.gz | awkt -F"\t" '{to_p=$1"\t"$2"\t"$2+1; for(i=3; i<=NF; i++){ to_p=to_p"\t"$i} print to_p; }' > full_sd_asm_all_cell_types.at_least_one_B.bed
+
+bedtools intersect -v -a full_sd_asm_all_cell_types.at_least_one_B.bed.gz -b ENCODE_blacklist/hg38-blacklist.v2.1start.bed > full_sd_asm_all_cell_types.at_least_one_B.blacklist_removed.bed
+
+cd ../../../../../../
+
+samtools faidx $WGBSTOOLS_DIR/references/hg38/genome.fa.gz --region-file sd_asm_analysis/homog/homog_aligned/all_snps/all_sd_asm.plus_75bp.regions_file.txt -n 100000000 > sd_asm_analysis/homog/homog_aligned/all_snps/all_sd_asm.plus_75bp.regions_sequence.fa
+
+sbatch --wrap="blat $WGBSTOOLS_DIR/references/T2T/hs1.fa.gz all_sd_asm.plus_75bp.regions_sequence.fa all_snps_sd_asm.fine_dna_min_score_145.psl -fine -t=dna -minScore=145" -c16 --mem=10g -t 0-15 -o slurm-blat-all-sd-asm-not-default-%j.out -J slurm-blat-all-sd-asm-not-default
+cat sd_asm_analysis/homog/homog_aligned/all_snps/all_snps_sd_asm.fine_dna_min_score_145.psl | awkt '{if(NR>5){print  $10}}' > sd_asm_analysis/homog/homog_aligned/all_snps/blat_found.txt
+tabix helper_data/gnomAD.all.hg38.bed.gz -R sd_asm_analysis/homog/homog_aligned/all_snps/full_sd_asm_all_cell_types.at_least_one_B.blacklist_removed.blat_duplicates_removed.super_heteros_removed.bed.gz | awkt '{print $1, $2, $5, $6}' > sd_asm_analysis/homog/homog_aligned/all_snps/snp_letters.tsv
+python3 remove_bad_sd_asm.py
+
+
+cat sd_asm_analysis/homog/homog_aligned/all_snps/snps_with_many_hetero.tsv | awkt '{if($3 > 150 || ($4 + $5) < 5){print $1, $2, $2+1, $3, $4, $5}}' > sd_asm_analysis/homog/homog_aligned/all_snps/snps_hetero_at_least_150_or_homoz_less_than_5.bed
+bedtools intersect -v -a sd_asm_analysis/homog/homog_aligned/all_snps/full_sd_asm_all_cell_types.at_least_one_B.blacklist_removed.bed.gz -b sd_asm_analysis/homog/homog_aligned/all_snps/blat_duplicate_regions.txt > sd_asm_analysis/homog/homog_aligned/all_snps/full_sd_asm_all_cell_types.at_least_one_B.blacklist_removed.blat_duplicates_removed.bed
+bedtools intersect -v -a sd_asm_analysis/homog/homog_aligned/all_snps/full_sd_asm_all_cell_types.at_least_one_B.blacklist_removed.blat_duplicates_removed.bed.gz -b sd_asm_analysis/homog/homog_aligned/all_snps/snps_hetero_at_least_150_or_homoz_less_than_5.bed > sd_asm_analysis/homog/homog_aligned/all_snps/full_sd_asm_all_cell_types.at_least_one_B.blacklist_removed.blat_duplicates_removed.super_heteros_removed.bed
+
+
+for f in sd_asm_analysis/homog/homog_aligned/all_snps/meqtl/simple_sd_asm/*.sd_asm_chart.tsv.gz; do
+    f_base=$(basename $f);
+    f_base=$f_base:r:r:r;
+    out_file="sd_asm_analysis/homog/homog_aligned/all_snps/meqtl/simple_sd_asm/coloc/$f_base.sd_asm_beta.csv";
+    echo $f_base;
+    if [ ! -f "$out_file" ]; then
+        sbatch --wrap="python3 create_sd_asm_beta.py $f -o $out_file" -c1 --mem=12g -t 0-1 -J create-sd-beta-$f_base -o slurm-%x-%j.out
+    fi
+done
+
+for f in sd_asm_analysis/homog/homog_aligned/all_snps/meqtl/simple_sd_asm/*.sd_asm.bimodal_regions.bed; do
+        f_base=$(basename $f);
+        f_base=$f_base:r:r:r;
+        out_file="sd_asm_analysis/homog/homog_aligned/all_snps/meqtl/simple_sd_asm/coloc/$f_base.GTEx.summary_stats_near_sd.csv";
+        echo $f_base;
+        sbatch --wrap="python3 -u get_GTEx_summary_stats.py $f -t $f_base -o $out_file" -c1 --mem=16g -t 0-14 -o slurm-get_gtex-summary-$f_base-%j.out -J get_gtex-summary-$f_base
+done
+
+for f in sd_asm_analysis/homog/homog_aligned/all_snps/meqtl/simple_sd_asm/coloc/*.sd_asm_beta.odds_p.csv; do
 	f_base=$(basename $f);
 	f_base=$f_base:r:r:r;
-	out_file="sd_asm_analysis/homog/homog_aligned/all_snps/${f_base}.allele.homog.pval.gz"
+	out_file="sd_asm_analysis/homog/homog_aligned/all_snps/meqtl/simple_sd_asm/coloc/$f_base.MR.TwoSampleMR.100bp.scaled.tsv";
+	gtex_file="sd_asm_analysis/homog/homog_aligned/all_snps/meqtl/simple_sd_asm/coloc/$f_base.GTEx.summary_stats_near_sd.csv";
+	echo $f_base;
 	if [ ! -f "$out_file" ]; then
-		sbatch --killable --requeue --wrap="python3 add_p_value_to_allele_homog.py --in_file $f --data_dir sd_asm_analysis/homog/homog_aligned/all_snps/" -c2 --mem=2g -t 0-1 -o slurm-add_p_val-$f_base-%j.out -J add_p_val-$f_base
+		sbatch --wrap="python3 run_MR_analaysis_TwoSampleMR.py --asm $f --gtex $gtex_file --out $out_file" -c1 --mem=8g -t 0-20 -J MR-scaled-$f_base -o slurm-scaled-%x-%j.out
 	fi
 done
+
+for f in sd_asm_analysis/homog/homog_aligned/all_snps/meqtl/simple_sd_asm/coloc/*.MR.TwoSampleMR.100bp.scaled.exposure_filtered.tsv; do
+  f_base=$(basename $f);
+  f_base=$f_base:r:r:r;
+  echo $f_base;
+  python3 analyze_MR_results.py $f;
+done
+
+sbatch --wrap="Rscript run_coloc.R Adipocytes.sd_asm_beta.csv Adipocytes.GTEx.summary_stats_near_sd.csv Adipocytes.coloc_results.csv" -c1 --mem=16g -t 0-16 -o slurm-coloc-Adipocytes.sd_asm_beta-%j.out -J slurm-coloc-Adipocytes.sd_asm_beta
+sbatch --wrap="Rscript run_coloc.R Skeletal-Musc.sd_asm_beta.csv Skeletal-Musc.GTEx.summary_stats_near_sd.csv Skeletal-Musc.coloc_results.csv" -c1 --mem=16g -t 0-16 -o slurm-coloc-Skeletal-Musc-%j.out -J slurm-coloc-Skeletal-Musc
+sbatch --wrap="Rscript run_coloc.R Blood-Mono+Macro.sd_asm_beta.csv Blood-Mono+Macro.GTEx.summary_stats_near_sd.csv Blood-Mono+Macro.coloc_results.csv" -c1 --mem=16g -t 0-16 -o slurm-coloc-Blood-Mono-%j.out -J slurm-coloc-Blood-Mono
+sbatch --wrap="Rscript run_coloc.R Breast-Basal-Ep.sd_asm_beta.csv Breast-Basal-Ep.GTEx.summary_stats_near_sd.csv Breast-Basal-Ep.coloc_results.csv" -c1 --mem=16g -t 0-16 -o slurm-coloc-Breast-Basal-%j.out -J slurm-coloc-Breast-Basal
+sbatch --wrap="Rscript run_coloc.R Heart-Cardio.sd_asm_beta.csv Heart-Cardio.GTEx.summary_stats_near_sd.csv Heart-Cardio.coloc_results.csv" -c1 --mem=16g -t 0-16 -o slurm-coloc-Heart-Cardio-%j.out -J slurm-coloc-Heart-Cardio
+sbatch --wrap="Rscript run_coloc.R Pancreas-Acinar.sd_asm_beta.csv Pancreas-Acinar.GTEx.summary_stats_near_sd.csv Pancreas-Acinar.coloc_results.csv" -c1 --mem=16g -t 0-16 -o slurm-coloc-Pancreas-Acinar-%j.out -J slurm-coloc-Pancreas-Acinar
+sbatch --wrap="Rscript run_coloc.R Thyroid-Ep.sd_asm_beta.csv Thyroid-Ep.GTEx.summary_stats_near_sd.csv Thyroid-Ep.coloc_results.csv" -c1 --mem=16g -t 0-16 -o slurm-coloc-Thyroid-Ep-%j.out -J slurm-coloc-Thyroid-Ep
+sbatch --wrap="Rscript run_coloc.R Colon-Ep.sd_asm_beta.csv Colon-Ep.GTEx.summary_stats_near_sd.csv Colon-Ep.coloc_results.csv" -c1 --mem=4g -t 0-26 -o slurm-coloc-Colon-Ep-%j.out -J slurm-coloc-Colon-Ep
+sbatch --wrap="Rscript run_coloc.R Endothel.sd_asm_beta.csv Endothel.GTEx.summary_stats_near_sd.csv Endothel.coloc_results.csv" -c1 --mem=4g -t 0-26 -o slurm-coloc-Endothel.sd_asm_beta-%j.out -J slurm-coloc-Endothel.sd_asm_beta
+sbatch --wrap="Rscript run_coloc.R Gastric-Ep.sd_asm_beta.csv Gastric-Ep.GTEx.summary_stats_near_sd.csv Gastric-Ep.coloc_results.csv" -c1 --mem=4g -t 0-26 -o slurm-coloc-Gastric-Ep-%j.out -J slurm-coloc-Gastric-Ep
+sbatch --wrap="Rscript run_coloc.R Kidney-Ep.sd_asm_beta.csv Kidney-Ep.GTEx.summary_stats_near_sd.csv Kidney-Ep.coloc_results.csv" -c1 --mem=4g -t 0-26 -o slurm-coloc-Kidney-Ep-%j.out -J slurm-coloc-Kidney-Ep
+sbatch --wrap="Rscript run_coloc.R Liver-Hep.sd_asm_beta.csv Liver-Hep.GTEx.summary_stats_near_sd.csv Liver-Hep.coloc_results.csv" -c1 --mem=4g -t 0-26 -o slurm-coloc-Liver-Hep-%j.out -J slurm-coloc-Liver-Hep
+sbatch --wrap="Rscript run_coloc.R Lung-Ep-Alveo.sd_asm_beta.csv Lung-Ep-Alveo.GTEx.summary_stats_near_sd.csv Lung-Ep-Alveo.coloc_results.csv" -c1 --mem=4g -t 0-26 -o slurm-coloc-Lung-Ep-%j.out -J slurm-coloc-Lung-Ep
+sbatch --wrap="Rscript run_coloc.R Neuron.sd_asm_beta.csv Neuron.GTEx.summary_stats_near_sd.csv Neuron.coloc_results.csv" -c1 --mem=4g -t 0-26 -o slurm-coloc-Neuron.sd_asm_beta-%j.out -J slurm-coloc-Neuron.sd_asm_beta
+sbatch --wrap="Rscript run_coloc.R Prostate-Ep.sd_asm_beta.csv Prostate-Ep.GTEx.summary_stats_near_sd.csv Prostate-Ep.coloc_results.csv" -c1 --mem=4g -t 0-26 -o slurm-coloc-Prostate-Ep-%j.out -J slurm-coloc-Prostate-Ep
+sbatch --wrap="Rscript run_coloc.R Small-Int-Ep.sd_asm_beta.csv Small-Int-Ep.GTEx.summary_stats_near_sd.csv Small-Int-Ep.coloc_results.csv" -c1 --mem=4g -t 0-26 -o slurm-coloc-Small-Int-%j.out -J slurm-coloc-Small-Int
+
+
+
+sbatch --wrap="Rscript run_coloc.dynamic.GWAS.R /cs/zbio/jrosensk/atlas_blocks_hg38_2/homog/homog_aligned/all_snps/meqtl/simple_sd_asm/coloc/Blood-T.sd_asm_beta.with_N.csv GCST90480650.h.tsv.gz GCST90480650.Blood-T.sd_asm_beta.coloc.csv" -c1 --mem=64g -t 0-16 -J slurm-coloc-Blood-T.GCST90480650 -o slurm-%x-%j.out
+sbatch --wrap="Rscript run_coloc.dynamic.GWAS.R /cs/zbio/jrosensk/atlas_blocks_hg38_2/homog/homog_aligned/all_snps/meqtl/simple_sd_asm/coloc/Blood-T.sd_asm_beta.with_N.csv GCST90480724.h.tsv.gz GCST90480724.Blood-T.sd_asm_beta.coloc.csv" -c1 --mem=64g -t 0-16 -J slurm-coloc-Blood-T.GCST90480724 -o slurm-%x-%j.out
+sbatch --wrap="Rscript run_coloc.dynamic.GWAS.R /cs/zbio/jrosensk/atlas_blocks_hg38_2/homog/homog_aligned/all_snps/meqtl/simple_sd_asm/coloc/Blood-T.sd_asm_beta.with_N.csv GCST90480725.h.tsv.gz GCST90480725.Blood-T.sd_asm_beta.coloc.csv" -c1 --mem=64g -t 0-16 -J slurm-coloc-Blood-T.GCST90480725 -o slurm-%x-%j.out
+sbatch --wrap="Rscript run_coloc.dynamic.GWAS.R /cs/zbio/jrosensk/atlas_blocks_hg38_2/homog/homog_aligned/all_snps/meqtl/simple_sd_asm/coloc/Blood-T.sd_asm_beta.with_N.csv 27863252-GCST004599-EFO_0004584.h.tsv.gz 27863252-GCST004599.Blood-T.sd_asm_beta.coloc.csv" -c1 --mem=64g -t 0-16 -J coloc-Blood-T.27863252-GCST004599 -o slurm-%x-%j.out
+sbatch --wrap="Rscript run_coloc.dynamic.GWAS.R /cs/zbio/jrosensk/atlas_blocks_hg38_2/homog/homog_aligned/all_snps/meqtl/simple_sd_asm/coloc/Blood-T.sd_asm_beta.with_N.csv GCST90479825.h.tsv.gz GCST90479825.h.Blood-T.sd_asm_beta.coloc.csv" -c1 --mem=64g -t 0-16 -J coloc-Blood-T.GCST90479825.h -o slurm-%x-%j.out
+sbatch --wrap="Rscript run_coloc.dynamic.GWAS.R /cs/zbio/jrosensk/atlas_blocks_hg38_2/homog/homog_aligned/all_snps/meqtl/simple_sd_asm/coloc/Blood-T.sd_asm_beta.with_N.csv 32888494-GCST90002394-EFO_0007989.h.tsv.gz 32888494-GCST90002394.Blood-T.sd_asm_beta.coloc.csv" -c1 --mem=64g -t 0-16 -J coloc-Blood-T.32888494-GCST90002394 -o slurm-%x-%j.out
+sbatch --wrap="Rscript run_coloc.dynamic.GWAS.R /cs/zbio/jrosensk/atlas_blocks_hg38_2/homog/homog_aligned/all_snps/meqtl/simple_sd_asm/coloc/Blood-T.sd_asm_beta.with_N.csv GCST90479832.h.tsv.gz GCST90479832.h.Blood-T.sd_asm_beta.coloc.csv" -c1 --mem=64g -t 0-16 -J coloc-Blood-T.GCST90479832.h -o slurm-%x-%j.out
+sbatch --wrap="Rscript run_coloc.dynamic.GWAS.R /cs/zbio/jrosensk/atlas_blocks_hg38_2/homog/homog_aligned/all_snps/meqtl/simple_sd_asm/coloc/Blood-T.sd_asm_beta.with_N.csv GCST90475821.h.tsv.gz GCST90475821.h.Blood-T.sd_asm_beta.coloc.csv" -c1 --mem=64g -t 0-16 -J coloc-Blood-T.GCST90475821.h -o slurm-%x-%j.out
+sbatch --wrap="Rscript run_coloc.dynamic.GWAS.R /cs/zbio/jrosensk/atlas_blocks_hg38_2/homog/homog_aligned/all_snps/meqtl/simple_sd_asm/coloc/Blood-T.sd_asm_beta.with_N.csv GCST90479967.h.tsv.gz GCST90479967.h.Blood-T.sd_asm_beta.coloc.csv" -c1 --mem=64g -t 0-16 -J coloc-Blood-T.GCST90479967.h -o slurm-%x-%j.out
+sbatch --wrap="Rscript run_coloc.dynamic.GWAS.R /cs/zbio/jrosensk/atlas_blocks_hg38_2/homog/homog_aligned/all_snps/meqtl/simple_sd_asm/coloc/Blood-T.sd_asm_beta.with_N.csv GCST90476007.h.tsv.gz GCST90476007.h.Blood-T.sd_asm_beta.coloc.csv" -c1 --mem=64g -t 0-16 -J coloc-Blood-T.GCST90476007.h -o slurm-%x-%j.out
+sbatch --wrap="Rscript run_coloc.dynamic.GWAS.R /cs/zbio/jrosensk/atlas_blocks_hg38_2/homog/homog_aligned/all_snps/meqtl/simple_sd_asm/coloc/Blood-T.sd_asm_beta.with_N.csv GCST90624746.h.tsv.gz GCST90624746.h.Blood-T.sd_asm_beta.coloc.csv" -c1 --mem=64g -t 0-16 -J coloc-Blood-T.GCST90624746.h -o slurm-%x-%j.out
+

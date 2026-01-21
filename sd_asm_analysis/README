@@ -1,0 +1,4 @@
+#
+mkdir homog
+mkdir homog/homog_aligned
+mkdir homog/homog_aligned/all_snps
