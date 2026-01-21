@@ -40,7 +40,7 @@ All processing steps and command-line instructions are documented in the file `e
 
 3. **Run the Pipeline**
    * Open the file **execute_pipeline.txt**.
-   * Execute the steps sequentially. This typically includes:
+   * Execute the steps sequentially. This includes:
      * Pre-processing and filtering of BAM files.
      * Extracting methylation states at specific CpG sites.
      * Calculating sequence-dependent features.
