@@ -9,7 +9,7 @@ for f in atlas_data/*pat.gz; do
 	f_base=$f_base:r:r;
 	out_file="sd_asm_analysis/$f_base.blocks.tsv";
 	if [ ! -f "$out_file" ]; then
-		sbatch --killable --requeue --wrap="python3 src/segment_pats.py --pats $f -o $out_file --min_u_threshold 0.25 --max_u_threshold 0.75 --min_m_threshold 0.25 --max_m_threshold 0.75 --window_size 4 --homog_read_cutoff 0.65 --genome hg38" -c16 --mem=10g -t 0-0:40 -o slurm-segment-PAT-$f_base-%j.out -J segment-pats-$f_base;
+		sbatch --killable --requeue --wrap="python3 bimodal_segmentation/segment_pats.py --pats $f -o $out_file --min_u_threshold 0.25 --max_u_threshold 0.75 --min_m_threshold 0.25 --max_m_threshold 0.75 --window_size 4 --homog_read_cutoff 0.65 --genome hg38" -c16 --mem=10g -t 0-0:40 -o slurm-segment-PAT-$f_base-%j.out -J segment-pats-$f_base;
 	fi
 done
 
